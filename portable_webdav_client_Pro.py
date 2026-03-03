@@ -44,7 +44,7 @@ class WebDAVApp:
         self.url_entry.grid(row=0, column=1, padx=5, pady=5, sticky="we")
 
         ttk.Label(config_frame, text="用户名:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
-        default_user = "webdavUser" # 请替换为真实用户名
+        default_user = "WebdavUser" # 请替换为真实用户名
         self.real_username = default_user
         self.placeholder_username = self.mask_username(default_user)
         
@@ -414,4 +414,5 @@ class WebDAVApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = WebDAVApp(root)
+
     root.mainloop()
