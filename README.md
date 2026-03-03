@@ -17,7 +17,7 @@
 ## 📦 如何使用 (普通用户)
 
 如果你不想配置 Python 环境，可以直接下载打包好的便携版可执行文件：
-1. 前往本项目的 [Releases 页面](https://github.com/你的用户名/你的仓库名/releases) (上传后请替换此链接)。
+1. 前往本项目的 [Releases 页面](https://github.com/jiu-zui-90817/Portable-WebDAV-Client/releases)。
 2. 下载最新的 `.exe` 文件。
 3. 双击直接运行，无需安装！
 
@@ -28,4 +28,5 @@
 **1. 克隆项目**
 ```bash
 git clone [https://github.com/你的用户名/你的仓库名.git](https://github.com/你的用户名/你的仓库名.git)
+
 cd Portable-WebDAV-Client
