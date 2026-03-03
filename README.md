@@ -29,9 +29,10 @@
 
 **1. 克隆项目**
 ```bash
-git clone [https://github.com/jiu-zui-90817/Portable-WebDAV-Client.git](https://github.com/jiu-zui-90817/Portable-WebDAV-Client.git)
+git clone https://github.com/jiu-zui-90817/Portable-WebDAV-Client.git
 
 cd Portable-WebDAV-Client
+
 
 
 
