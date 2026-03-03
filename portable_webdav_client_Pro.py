@@ -185,11 +185,33 @@ class WebDAVApp:
         threading.Thread(target=self._jump_to_path_worker, args=(path,)).start()
 
     def _jump_to_path_worker(self, path):
-        try:
-            files = self.client.list(path)
-            self.root.after(0, self._jump_success, path, files)
-        except Exception as e:
-            self.root.after(0, self._jump_fail, path, str(e))
+            try:
+                # 1. 检查路径在服务器上是否存在
+                if not self.client.check(path):
+                    self.root.after(0, self._jump_fail, path, "服务器上找不到该路径或文件，请检查拼写。")
+                    return
+
+                # 2. 判断是文件夹还是文件
+                if self.client.is_dir(path):
+                    # 是文件夹：照常列出文件内容
+                    files = self.client.list(path)
+                    self.root.after(0, self._jump_success, path, files)
+                else:
+                    # 是文件：触发文件下载分支
+                    self.root.after(0, self._jump_is_file, path)
+            except Exception as e:
+                self.root.after(0, self._jump_fail, path, str(e))
+                
+    def _jump_is_file(self, path):
+        # 提取文件名
+        base_name = posixpath.basename(path)
+        
+        # 因为跳转时清空了界面列表，如果是文件，我们需要把界面恢复到跳转前的目录
+        self._load_folder(self.current_path)
+        
+        # 弹出下载提示
+        if messagebox.askyesno("发现文件", f"目标路径是一个文件，是否直接下载？\n\n{base_name}"):
+            self.download_file(base_name, full_path=path)
 
     def _jump_success(self, path, files):
         self.cache[path] = files
@@ -342,10 +364,13 @@ class WebDAVApp:
             
         self.download_file(base_name)
 
-    def download_file(self, base_name):
+    # 增加了一个 full_path 参数，默认为 None
+    def download_file(self, base_name, full_path=None):
         if not self.client: return
 
-        remote_path = '/' + base_name if self.current_path == '/' else self.current_path.rstrip('/') + '/' + base_name
+        # 如果传了 full_path（文件直链跳转），就直接用它；否则照常拼接当前路径
+        remote_path = full_path if full_path else ('/' + base_name if self.current_path == '/' else self.current_path.rstrip('/') + '/' + base_name)
+        
         save_path = filedialog.asksaveasfilename(initialfile=base_name, title="保存文件")
         if not save_path: return
 
@@ -355,6 +380,7 @@ class WebDAVApp:
         self.progress_label.config(text="0.0% (0 KB/s)")
 
         threading.Thread(target=self._do_download, args=(remote_path, save_path, base_name), daemon=True).start()
+
 
     def _do_download(self, remote_path, local_path, display_name):
         try:
@@ -414,5 +440,4 @@ class WebDAVApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = WebDAVApp(root)
-
     root.mainloop()
