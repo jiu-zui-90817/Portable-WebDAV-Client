@@ -5,7 +5,6 @@ on:
   push:
     tags:
       - 'v*'
-  # 同时也允许在 GitHub 网页上通过按钮手动触发
   workflow_dispatch: 
 
 jobs:
@@ -13,8 +12,7 @@ jobs:
     name: Build on Windows
     runs-on: windows-latest
     
-    # 策略矩阵：这是同时打包双版本的核心！
-    # 它会同时启动两个任务：一个用 x64 (64位)，一个用 x86 (32位)
+    # 策略矩阵：同时打包双版本 (x64 和 x86)
     strategy:
       matrix:
         architecture: ['x64', 'x86']
@@ -36,23 +34,23 @@ jobs:
           pip install -r requirements.txt
 
       - name: Build with PyInstaller
-        # 根据架构不同，输出不同名字的 exe 文件
+       
+        # --name 后面拼接了 _${{ matrix.architecture }} 来区分 32位和64位
         run: |
-          pyinstaller -F -w --name portable_webdav_client_${{ matrix.architecture }} portable_webdav_client.py
+          pyinstaller --onefile --noconsole --name "Portable WebDAV Client Pro V1.0_${{ matrix.architecture }}" --icon=webdav.ico portable_webdav_client_Pro.py
 
       - name: Upload Artifacts
-        # 将打包好的 exe 上传到 GitHub 的临时空间
         uses: actions/upload-artifact@v4
         with:
           name: exe-files-${{ matrix.architecture }}
           path: dist/*.exe
 
-  # 发布任务：等打包任务完成后，自动创建 Release
+  # 发布任务
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') # 只有打了 Tag 才会自动发布
+    if: startsWith(github.ref, 'refs/tags/') 
     
     steps:
       - name: Download All Artifacts
