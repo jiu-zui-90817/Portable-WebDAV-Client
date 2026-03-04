@@ -27,7 +27,7 @@ class WebDAVApp:
         self.client = None
         self.current_path = '/'
         self.history = []               # 浏览历史
-        self.cache = {}                  # 路径 -> 文件列表缓存
+        self.cache = {}                 # 路径 -> 文件列表缓存
 
         self.create_widgets()
         self.create_context_menu()
@@ -158,6 +158,25 @@ class WebDAVApp:
         self.status.config(text=text, foreground=color)
         self.root.update_idletasks()
 
+    def format_size(self, size_in_bytes):
+        """将字节数转换为易读的文件大小格式"""
+        if not size_in_bytes:
+            return "-"
+        try:
+            size = float(size_in_bytes)
+            if size == 0:
+                return "0 B"
+            elif size < 1024:
+                return f"{size:.0f} B"
+            elif size < 1024 * 1024:
+                return f"{size / 1024:.1f} KB"
+            elif size < 1024 * 1024 * 1024:
+                return f"{size / (1024 * 1024):.1f} MB"
+            else:
+                return f"{size / (1024 * 1024 * 1024):.2f} GB"
+        except:
+            return "-"
+
     # ---------- 交互事件 ----------
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
@@ -185,22 +204,22 @@ class WebDAVApp:
         threading.Thread(target=self._jump_to_path_worker, args=(path,)).start()
 
     def _jump_to_path_worker(self, path):
-            try:
-                # 1. 检查路径在服务器上是否存在
-                if not self.client.check(path):
-                    self.root.after(0, self._jump_fail, path, "服务器上找不到该路径或文件，请检查拼写。")
-                    return
+        try:
+            # 1. 检查路径在服务器上是否存在
+            if not self.client.check(path):
+                self.root.after(0, self._jump_fail, path, "服务器上找不到该路径或文件，请检查拼写。")
+                return
 
-                # 2. 判断是文件夹还是文件
-                if self.client.is_dir(path):
-                    # 是文件夹：照常列出文件内容
-                    files = self.client.list(path)
-                    self.root.after(0, self._jump_success, path, files)
-                else:
-                    # 是文件：触发文件下载分支
-                    self.root.after(0, self._jump_is_file, path)
-            except Exception as e:
-                self.root.after(0, self._jump_fail, path, str(e))
+            # 2. 判断是文件夹还是文件
+            if self.client.is_dir(path):
+                # 是文件夹：获取详细信息列表
+                files = self.client.list(path, get_info=True)
+                self.root.after(0, self._jump_success, path, files)
+            else:
+                # 是文件：触发文件下载分支
+                self.root.after(0, self._jump_is_file, path)
+        except Exception as e:
+            self.root.after(0, self._jump_fail, path, str(e))
                 
     def _jump_is_file(self, path):
         # 提取文件名
@@ -248,7 +267,8 @@ class WebDAVApp:
                 'webdav_password': pwd
             }
             self.client = Client(options)
-            files = self.client.list('/') 
+            # 添加 get_info=True 以获取文件大小字典
+            files = self.client.list('/', get_info=True) 
             self.cache.clear()
             self.cache['/'] = files
             self.current_path = '/'
@@ -260,44 +280,61 @@ class WebDAVApp:
             self.root.after(0, lambda: self.connect_btn.config(state=tk.NORMAL, text="🔌 连接服务器"))
 
     def _update_file_list(self, files):
-            self.tree.delete(*self.tree.get_children())
-            items_info = []
+        self.tree.delete(*self.tree.get_children())
+        items_info = []
 
-            # 获取当前所在目录的纯名称 (例如从 /app/Windows/ 中提取出 Windows)
-            current_basename = posixpath.basename(self.current_path.rstrip('/'))
-            skipped_self = False # 标记：确保只过滤一次当前目录本身
+        # 获取当前所在目录的纯名称
+        current_basename = posixpath.basename(self.current_path.rstrip('/'))
+        skipped_self = False # 标记：确保只过滤一次当前目录本身
 
-            for entry in files:
-                entry = entry.strip()
+        for item in files:
+            # 兼容处理：以防某些旧版服务器没返回字典而是字符串
+            if isinstance(item, str):
+                entry = item.strip()
                 if not entry or entry == '/': continue
-
                 raw_name = entry.rstrip('/')
                 base_name = posixpath.basename(raw_name)
-                if not base_name: continue
-
-                # 比对纯名称，并且只忽略第一次碰到的自己
-                if not skipped_self and base_name == current_basename:
-                    skipped_self = True
-                    continue
-
                 is_dir = entry.endswith('/')
-                items_info.append((base_name, is_dir))
+                size_raw = 0
+            else:
+                # 正常情况：解析 get_info=True 返回的详细字典
+                raw_name = item.get('path', item.get('name', '')).rstrip('/')
+                if not raw_name or raw_name == '/': continue
+                base_name = posixpath.basename(raw_name)
+                is_dir = item.get('isdir', False)
+                size_raw = item.get('size', 0)
 
-            items_info.sort(key=lambda x: (not x[1], x[0].lower()))
+            if not base_name: continue
 
-            for base_name, is_dir in items_info:
-                icon = "📁" if is_dir else "📄"
-                type_str = "文件夹" if is_dir else "文件"
-                # text 属性保存真实的纯文件名，values 存储显示在列中的数据
-                self.tree.insert("", tk.END, text=base_name, values=(f"{icon}  {base_name}", type_str, "-"), tags=('dir' if is_dir else 'file',))
+            # 比对纯名称，并且只忽略第一次碰到的自己
+            if not skipped_self and base_name == current_basename:
+                skipped_self = True
+                continue
+            
+            # 过滤掉根目录下的幽灵 webdav 文件夹
+            if self.current_path == '/' and base_name == 'webdav':
+                continue
 
-            self.path_label.config(text=f"当前路径: {self.current_path}")
-            self.up_btn.config(state=tk.NORMAL if self.current_path != '/' else tk.DISABLED)
-            self.download_btn.config(state=tk.NORMAL)
-            self.refresh_btn.config(state=tk.NORMAL)
-            self.jump_btn.config(state=tk.NORMAL)
-            self.connect_btn.config(state=tk.NORMAL, text="🔌 重新连接")
-            self.set_status("列表加载完成", "green")
+            items_info.append((base_name, is_dir, size_raw))
+
+        # 排序：文件夹在前，文件在后
+        items_info.sort(key=lambda x: (not x[1], x[0].lower()))
+
+        for base_name, is_dir, size_raw in items_info:
+            icon = "📁" if is_dir else "📄"
+            type_str = "文件夹" if is_dir else "文件"
+            size_str = "-" if is_dir else self.format_size(size_raw)
+            
+            # text 属性保存真实的纯文件名，values 存储显示在列中的数据
+            self.tree.insert("", tk.END, text=base_name, values=(f"{icon}  {base_name}", type_str, size_str), tags=('dir' if is_dir else 'file',))
+
+        self.path_label.config(text=f"当前路径: {self.current_path}")
+        self.up_btn.config(state=tk.NORMAL if self.current_path != '/' else tk.DISABLED)
+        self.download_btn.config(state=tk.NORMAL)
+        self.refresh_btn.config(state=tk.NORMAL)
+        self.jump_btn.config(state=tk.NORMAL)
+        self.connect_btn.config(state=tk.NORMAL, text="🔌 重新连接")
+        self.set_status("列表加载完成", "green")
 
     def _load_folder(self, path):
         if path in self.cache:
@@ -306,7 +343,8 @@ class WebDAVApp:
 
         self.set_status(f"正在加载 {path} ...", "blue")
         try:
-            files = self.client.list(path)
+            # 添加 get_info=True 以获取文件大小字典
+            files = self.client.list(path, get_info=True)
             self.cache[path] = files
             self.root.after(0, self._update_file_list, files)
         except Exception as e:
@@ -364,73 +402,114 @@ class WebDAVApp:
             
         self.download_file(base_name)
 
-    # 增加了一个 full_path 参数，默认为 None
     def download_file(self, base_name, full_path=None):
         if not self.client: return
+        
+        # 防止重复点击下载
+        if getattr(self, 'is_downloading', False):
+            messagebox.showwarning("提示", "当前有正在下载的任务，请稍后再试。")
+            return
 
-        # 如果传了 full_path（文件直链跳转），就直接用它；否则照常拼接当前路径
         remote_path = full_path if full_path else ('/' + base_name if self.current_path == '/' else self.current_path.rstrip('/') + '/' + base_name)
         
         save_path = filedialog.asksaveasfilename(initialfile=base_name, title="保存文件")
         if not save_path: return
 
+        # 设置下载状态与取消标志
+        self.is_downloading = True
+        self.cancel_flag = False
+
         self.set_status(f"准备下载 {base_name} ...", "blue")
-        self.download_btn.config(state=tk.DISABLED)
+        
+        # 将下载按钮魔改为“取消下载”按钮
+        self.download_btn.config(text="❌ 取消下载", command=self.cancel_download_action)
+        
         self.progress['value'] = 0
         self.progress_label.config(text="0.0% (0 KB/s)")
 
-        threading.Thread(target=self._do_download, args=(remote_path, save_path, base_name), daemon=True).start()
+        # 启动流式下载线程
+        threading.Thread(target=self._do_download_stream, args=(remote_path, save_path, base_name), daemon=True).start()
 
+    def cancel_download_action(self):
+        """点击取消下载按钮时触发"""
+        if getattr(self, 'is_downloading', False):
+            if messagebox.askyesno("取消下载", "确定要终止当前的下载任务吗？"):
+                self.cancel_flag = True
+                self.set_status("正在取消下载，请稍候...", "orange")
+                self.download_btn.config(state=tk.DISABLED)
 
-    def _do_download(self, remote_path, local_path, display_name):
+    def _do_download_stream(self, remote_path, local_path, display_name):
+        """流式下载引擎，支持中断和实时测速"""
         try:
             info = self.client.info(remote_path)
             total_size = int(info.get('size', 0)) if info else 0
 
-            self.download_complete = False
-            self.download_error = None
 
-            def download_task():
-                try:
-                    self.client.download(remote_path, local_path)
-                    self.download_complete = True
-                except Exception as e:
-                    self.download_error = e
-                    self.download_complete = True
+            response = self.client.execute_request(action='download', path=remote_path)
+            response.raise_for_status()
+            # ====================================================
 
-            threading.Thread(target=download_task, daemon=True).start()
-
+            downloaded = 0
             start_time = time.time()
-            while not self.download_complete:
-                if os.path.exists(local_path):
-                    downloaded = os.path.getsize(local_path)
-                    if total_size > 0:
-                        percent = (downloaded / total_size) * 100
-                        elapsed = time.time() - start_time
-                        speed = downloaded / elapsed / 1024 / 1024 if elapsed > 0 else 0 # 转换成 MB/s
-                        speed_str = f"{speed:.2f} MB/s" if speed > 1 else f"{speed * 1024:.1f} KB/s"
-                        self.root.after(0, self._update_progress, percent, speed_str)
-                time.sleep(0.3)
+            last_update_time = 0
 
-            if self.download_error:
-                raise self.download_error
+            # 以追加流的方式写入文件
+            with open(local_path, 'wb') as f:
+                # 每次下载 256KB 的数据块
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    # 每次循环检查用户是否点击了“取消”
+                    if getattr(self, 'cancel_flag', False):
+                        break
+                        
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # 限制刷新界面的频率（每0.2秒刷新一次），防止界面卡死
+                        current_time = time.time()
+                        if current_time - last_update_time > 0.2:
+                            percent = (downloaded / total_size) * 100 if total_size > 0 else 0
+                            elapsed = current_time - start_time
+                            speed = downloaded / elapsed / 1024 / 1024 if elapsed > 0 else 0
+                            speed_str = f"{speed:.2f} MB/s" if speed > 1 else f"{speed * 1024:.1f} KB/s"
+                            self.root.after(0, self._update_progress, percent, speed_str)
+                            last_update_time = current_time
+
+            # 离开写入循环后，判断是正常下完还是被取消的
+            if getattr(self, 'cancel_flag', False):
+                # 安全删除没下完的半截“垃圾文件”
+                if os.path.exists(local_path):
+                    try:
+                        os.remove(local_path)
+                    except:
+                        pass
+                self.root.after(0, self._download_done, False, "下载已被手动取消", True)
             else:
-                self.root.after(0, self._download_done, True, display_name)
+                self.root.after(0, self._update_progress, 100.0, "完成")
+                self.root.after(0, self._download_done, True, display_name, False)
 
         except Exception as e:
             traceback.print_exc()
-            self.root.after(0, self._download_done, False, f"{display_name} 下载失败: {str(e)}")
-
+            self.root.after(0, self._download_done, False, f"{display_name} 下载失败: {str(e)}", False)
+            
     def _update_progress(self, percent, speed):
         self.progress['value'] = percent
         self.progress_label.config(text=f"{percent:.1f}% ({speed})")
         self.set_status(f"正在下载... {percent:.1f}%", "blue")
 
-    def _download_done(self, success, msg):
-        self.download_btn.config(state=tk.NORMAL)
+    def _download_done(self, success, msg, is_cancelled):
+        # 恢复状态标志
+        self.is_downloading = False
+        
+        # 将取消按钮恢复成下载按钮
+        self.download_btn.config(text="📥 下载选中项", command=self.download_selected, state=tk.NORMAL)
         self.progress['value'] = 0
         self.progress_label.config(text="")
-        if success:
+        
+        if is_cancelled:
+            self.set_status("已取消下载", "orange")
+            messagebox.showinfo("已取消", "下载任务已取消，残留文件已清理。")
+        elif success:
             self.set_status(f"下载完成: {msg}", "green")
             messagebox.showinfo("下载完成", f"[{msg}] 已成功保存到本地！")
         else:
