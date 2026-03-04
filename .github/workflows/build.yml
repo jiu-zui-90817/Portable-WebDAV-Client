@@ -1,68 +1,71 @@
-name: Build and Release EXE
+name: Build Multi-Platform Release
 
-# 触发条件：当推送带有 v 开头的标签（如 v1.0.0）时，自动触发打包
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: 
+  workflow_dispatch: # 手动触发按钮
 
 jobs:
   build:
-    name: Build on Windows
-    runs-on: windows-latest
+    name: Build on ${{ matrix.platform_name }}
+    runs-on: ${{ matrix.os }}
     
-    # 策略矩阵：同时打包双版本 (x64 和 x86)
     strategy:
+      fail-fast: false
       matrix:
-        architecture: ['x64', 'x86']
+        include:
+          # 1. Windows X64
+          - os: windows-latest
+            platform_name: Windows_X64
+            file_ext: .exe
+            
+          # 2. Linux X64 (常规 x86_64 服务器)
+          - os: ubuntu-latest
+            platform_name: Linux_X64
+            file_ext: ""
+            
+          # 3. Linux ARM64 (树莓派、甲骨文 ARM 机器等)
+          - os: ubuntu-24.04-arm
+            platform_name: Linux_ARM64
+            file_ext: ""
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-      - name: Setup Python ${{ matrix.architecture }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          architecture: ${{ matrix.architecture }}
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
+    # 🐧 Linux 专属：安装底层 Tkinter 图形库依赖
+    - name: Install System Dependencies (Linux Only)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-tk
 
-      - name: Build with PyInstaller
-       
-        # --name 后面拼接了 _${{ matrix.architecture }} 来区分 32位和64位
-        run: |
-          pyinstaller --onefile --noconsole --name "Portable WebDAV Client Pro V1.0_${{ matrix.architecture }}" --icon=webdav.ico portable_webdav_client_Pro.py
+    - name: Install Python Libraries
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller webdavclient3 requests
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: exe-files-${{ matrix.architecture }}
-          path: dist/*.exe
+    # 🪟 Windows 打包：带 .ico 图标和 .exe 后缀
+    - name: Build with PyInstaller (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        pyinstaller --onefile --noconsole --name "Portable_WebDAV_Client_${{ matrix.platform_name }}" --icon=webdav.ico portable_webdav_client_Pro.py
 
-  # 发布任务
-  release:
-    name: Create Release
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') 
-    
-    steps:
-      - name: Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: exe-files-*
-          merge-multiple: true
+    # 🐧 Linux 打包：纯净打包，不带图标属性
+    - name: Build with PyInstaller (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        pyinstaller --onefile --noconsole --name "Portable_WebDAV_Client_${{ matrix.platform_name }}" portable_webdav_client_Pro.py
 
-      - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # 📤 统一上传产物
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Release-${{ matrix.platform_name }}
+        path: dist/Portable_WebDAV_Client_${{ matrix.platform_name }}${ matrix.file_ext }
