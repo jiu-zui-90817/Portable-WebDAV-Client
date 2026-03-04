@@ -15,29 +15,40 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 1. Windows X64
+          # 1. Windows 64位 (主流电脑)
           - os: windows-latest
             platform_name: Windows_X64
+            python_arch: 'x64'
             file_ext: .exe
             
-          # 2. Linux X64 (常规 x86_64 服务器)
+          # 2. Windows 32位 (兼容老旧电脑和特殊系统)
+          - os: windows-latest
+            platform_name: Windows_X86
+            python_arch: 'x86'
+            file_ext: .exe
+            
+          # 3. Linux 64位 (常规 x86_64 服务器)
           - os: ubuntu-latest
             platform_name: Linux_X64
+            python_arch: 'x64'
             file_ext: ""
             
-          # 3. Linux ARM64 (树莓派、甲骨文 ARM 机器等)
+          # 4. Linux ARM64 (树莓派、甲骨文 ARM 机器等)
           - os: ubuntu-24.04-arm
             platform_name: Linux_ARM64
+            python_arch: 'aarch64'
             file_ext: ""
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    # 🚀 核心魔法：根据矩阵动态安装 32位 或 64位 的 Python
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+        architecture: ${{ matrix.python_arch }} 
 
     # 🐧 Linux 专属：安装底层 Tkinter 图形库依赖
     - name: Install System Dependencies (Linux Only)
