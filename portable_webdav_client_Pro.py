@@ -10,7 +10,7 @@ from webdav3.client import Client
 class WebDAVApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("便携 WebDAV 客户端 Pro")
+        self.root.title("便携 WebDAV 客户端 Pro V1.2")
         self.root.geometry("850x650")
         self.center_window(850, 650)
         
@@ -520,3 +520,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = WebDAVApp(root)
     root.mainloop()
+
