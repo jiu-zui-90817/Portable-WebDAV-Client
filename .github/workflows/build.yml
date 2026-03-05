@@ -86,4 +86,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Release-${{ matrix.platform_name }}
-        path: dist/Portable_WebDAV_Client_${{ matrix.platform_name }}${ matrix.file_ext }
+        path: dist/Portable_WebDAV_Client_${{ matrix.platform_name }}${{ matrix.file_ext }}
