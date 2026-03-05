@@ -42,12 +42,20 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # 🚀 核心魔法：根据矩阵动态安装 32位 或 64位 的 Python
-    - name: Setup Python
+    # 给 Windows 和 Linux X64 指定架构安装
+    - name: Setup Python (For x86 / x64)
+      if: matrix.platform_name != 'Linux_ARM64'
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         architecture: ${{ matrix.python_arch }} 
+
+    # 给原生 ARM64 机器使用默认架构安装
+    - name: Setup Python (For ARM64)
+      if: matrix.platform_name == 'Linux_ARM64'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
 
     # 🐧 Linux 专属：安装底层 Tkinter 图形库依赖
     - name: Install System Dependencies (Linux Only)
