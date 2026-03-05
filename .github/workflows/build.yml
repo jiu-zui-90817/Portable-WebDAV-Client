@@ -69,6 +69,16 @@ jobs:
         python -m pip install --upgrade pip
         pip install pyinstaller webdavclient3 requests
 
+    # 为不同系统安装 UPX 压缩工具
+    - name: Install UPX for Compression
+      run: |
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          choco install upx
+        elif [ "$RUNNER_OS" == "Linux" ]; then
+          sudo apt-get install -y upx-ucl
+        fi
+      shell: bash        
+
     # 🪟 Windows 打包：带 .ico 图标和 .exe 后缀
     - name: Build with PyInstaller (Windows)
       if: runner.os == 'Windows'
