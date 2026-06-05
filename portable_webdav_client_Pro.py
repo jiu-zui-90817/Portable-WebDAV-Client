@@ -10,7 +10,7 @@ from webdav3.client import Client
 class WebDAVApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("便携 WebDAV 客户端 Pro V1.2")
+        self.root.title("便携 WebDAV 客户端 Pro V1.5")
         self.root.geometry("850x650")
         self.center_window(850, 650)
         
@@ -28,6 +28,7 @@ class WebDAVApp:
         self.current_path = '/'
         self.history = []               # 浏览历史
         self.cache = {}                 # 路径 -> 文件列表缓存
+        self.current_has_permission = True # 默认拥有权限（配合国内网盘兜底策略）
 
         self.create_widgets()
         self.create_context_menu()
@@ -78,18 +79,20 @@ class WebDAVApp:
         self.download_btn = ttk.Button(toolbar_frame, text="📥 下载选中项", command=self.download_selected, state=tk.DISABLED)
         self.download_btn.pack(side=tk.LEFT, padx=5)
 
+        self.upload_btn = ttk.Button(toolbar_frame, text="📤 上传文件", command=self.upload_file, state=tk.DISABLED)
+        self.upload_btn.pack(side=tk.LEFT, padx=5)
+
         # ========== 路径显示 ==========
         path_frame = ttk.Frame(self.root)
         path_frame.grid(row=2, column=0, padx=15, pady=(0, 5), sticky="ew")
         self.path_label = ttk.Label(path_frame, text="当前路径: /", font=("Microsoft YaHei", 9, "bold"), foreground="#4361ee")
         self.path_label.pack(side=tk.LEFT)
 
-        # ========== 文件列表 (Treeview 优化) ==========
+        # ========== 文件列表 (Treeview) ==========
         list_frame = ttk.Frame(self.root)
         list_frame.grid(row=3, column=0, padx=15, pady=5, sticky="nsew")
         self.root.grid_rowconfigure(3, weight=1)
 
-        # 创建多列视图
         columns = ("name", "type", "size")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="extended")
         self.tree.heading("name", text="文件名称", anchor=tk.W)
@@ -100,15 +103,13 @@ class WebDAVApp:
         self.tree.column("type", width=100, anchor=tk.CENTER)
         self.tree.column("size", width=120, anchor=tk.E)
 
-        # 滚动条
         y_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=y_scroll.set)
         y_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # 绑定事件
         self.tree.bind("<Double-1>", self.on_item_double_click)
-        self.tree.bind("<Button-3>", self.show_context_menu) # 右键菜单
+        self.tree.bind("<Button-3>", self.show_context_menu)
 
         # ========== 底部：进度条与状态栏 ==========
         bottom_frame = ttk.Frame(self.root)
@@ -124,7 +125,6 @@ class WebDAVApp:
         self.progress.pack(side=tk.RIGHT, padx=10)
 
     def create_context_menu(self):
-        """创建右键菜单"""
         self.context_menu = Menu(self.root, tearoff=0, font=("Microsoft YaHei", 9))
         self.context_menu.add_command(label="📥 下载选中文件", command=self.download_selected)
         self.context_menu.add_command(label="📋 复制文件名称", command=self.copy_filename)
@@ -159,23 +159,38 @@ class WebDAVApp:
         self.root.update_idletasks()
 
     def format_size(self, size_in_bytes):
-        """将字节数转换为易读的文件大小格式"""
-        if not size_in_bytes:
-            return "-"
+        if not size_in_bytes: return "-"
         try:
             size = float(size_in_bytes)
-            if size == 0:
-                return "0 B"
-            elif size < 1024:
-                return f"{size:.0f} B"
-            elif size < 1024 * 1024:
-                return f"{size / 1024:.1f} KB"
-            elif size < 1024 * 1024 * 1024:
-                return f"{size / (1024 * 1024):.1f} MB"
-            else:
-                return f"{size / (1024 * 1024 * 1024):.2f} GB"
-        except:
-            return "-"
+            if size == 0: return "0 B"
+            elif size < 1024: return f"{size:.0f} B"
+            elif size < 1024 * 1024: return f"{size / 1024:.1f} KB"
+            elif size < 1024 * 1024 * 1024: return f"{size / (1024 * 1024):.1f} MB"
+            else: return f"{size / (1024 * 1024 * 1024):.2f} GB"
+        except: return "-"
+
+    # ========== 【权限兜底策略】 ==========
+    def check_upload_permission(self, path):
+        """
+        探测当前目录的写权限。
+        由于 123云盘、阿里云盘等国内网盘网关会拦截 OPTIONS 请求（返回401），
+        导致提前嗅探失败。因此默认放行（返回 True），
+        真正的权限拦截交由上传时的 try...except 捕获并弹出红色警告框来兜底。
+        """
+        return True
+        
+        # --- 如果以后连接标准WebDAV (如群晖/Nextcloud)，可解除下方代码注释开启真实嗅探 ---
+        # if not self.client: return False
+        # try:
+        #     full_url = self.client.get_url(path)
+        #     response = self.client.session.options(full_url)
+        #     if response.status_code in (200, 204):
+        #         allowed_methods = response.headers.get('Allow', '').upper()
+        #         if 'PUT' in allowed_methods:
+        #             return True
+        #     return False
+        # except Exception as e:
+        #     return False
 
     # ---------- 交互事件 ----------
     def show_context_menu(self, event):
@@ -188,7 +203,7 @@ class WebDAVApp:
         selection = self.tree.selection()
         if selection:
             item = selection[0]
-            base_name = self.tree.item(item, "text") # text存储了真实的纯文件名
+            base_name = self.tree.item(item, "text")
             self.root.clipboard_clear()
             self.root.clipboard_append(base_name)
             self.set_status(f"已复制: {base_name}", "green")
@@ -205,30 +220,21 @@ class WebDAVApp:
 
     def _jump_to_path_worker(self, path):
         try:
-            # 1. 检查路径在服务器上是否存在
             if not self.client.check(path):
                 self.root.after(0, self._jump_fail, path, "服务器上找不到该路径或文件，请检查拼写。")
                 return
 
-            # 2. 判断是文件夹还是文件
             if self.client.is_dir(path):
-                # 是文件夹：获取详细信息列表
                 files = self.client.list(path, get_info=True)
                 self.root.after(0, self._jump_success, path, files)
             else:
-                # 是文件：触发文件下载分支
                 self.root.after(0, self._jump_is_file, path)
         except Exception as e:
             self.root.after(0, self._jump_fail, path, str(e))
                 
     def _jump_is_file(self, path):
-        # 提取文件名
         base_name = posixpath.basename(path)
-        
-        # 因为跳转时清空了界面列表，如果是文件，我们需要把界面恢复到跳转前的目录
         self._load_folder(self.current_path)
-        
-        # 弹出下载提示
         if messagebox.askyesno("发现文件", f"目标路径是一个文件，是否直接下载？\n\n{base_name}"):
             self.download_file(base_name, full_path=path)
 
@@ -267,7 +273,6 @@ class WebDAVApp:
                 'webdav_password': pwd
             }
             self.client = Client(options)
-            # 添加 get_info=True 以获取文件大小字典
             files = self.client.list('/', get_info=True) 
             self.cache.clear()
             self.cache['/'] = files
@@ -283,12 +288,10 @@ class WebDAVApp:
         self.tree.delete(*self.tree.get_children())
         items_info = []
 
-        # 获取当前所在目录的纯名称
         current_basename = posixpath.basename(self.current_path.rstrip('/'))
-        skipped_self = False # 标记：确保只过滤一次当前目录本身
+        skipped_self = False 
 
         for item in files:
-            # 兼容处理：以防某些旧版服务器没返回字典而是字符串
             if isinstance(item, str):
                 entry = item.strip()
                 if not entry or entry == '/': continue
@@ -297,7 +300,6 @@ class WebDAVApp:
                 is_dir = entry.endswith('/')
                 size_raw = 0
             else:
-                # 正常情况：解析 get_info=True 返回的详细字典
                 raw_name = item.get('path', item.get('name', '')).rstrip('/')
                 if not raw_name or raw_name == '/': continue
                 base_name = posixpath.basename(raw_name)
@@ -305,27 +307,22 @@ class WebDAVApp:
                 size_raw = item.get('size', 0)
 
             if not base_name: continue
-
-            # 比对纯名称，并且只忽略第一次碰到的自己
             if not skipped_self and base_name == current_basename:
                 skipped_self = True
                 continue
             
-            # 过滤掉根目录下的幽灵 webdav 文件夹
+            # 过滤AList等虚拟挂载点的冗余 webdav 文件夹
             if self.current_path == '/' and base_name == 'webdav':
                 continue
 
             items_info.append((base_name, is_dir, size_raw))
 
-        # 排序：文件夹在前，文件在后
         items_info.sort(key=lambda x: (not x[1], x[0].lower()))
 
         for base_name, is_dir, size_raw in items_info:
             icon = "📁" if is_dir else "📄"
             type_str = "文件夹" if is_dir else "文件"
             size_str = "-" if is_dir else self.format_size(size_raw)
-            
-            # text 属性保存真实的纯文件名，values 存储显示在列中的数据
             self.tree.insert("", tk.END, text=base_name, values=(f"{icon}  {base_name}", type_str, size_str), tags=('dir' if is_dir else 'file',))
 
         self.path_label.config(text=f"当前路径: {self.current_path}")
@@ -334,6 +331,17 @@ class WebDAVApp:
         self.refresh_btn.config(state=tk.NORMAL)
         self.jump_btn.config(state=tk.NORMAL)
         self.connect_btn.config(state=tk.NORMAL, text="🔌 重新连接")
+        
+        # 异步调用兜底鉴权逻辑
+        def verify_and_update_btn():
+            has_permission = self.check_upload_permission(self.current_path)
+            self.current_has_permission = has_permission
+            if has_permission:
+                self.root.after(0, lambda: self.upload_btn.config(state=tk.NORMAL, text="📤 上传文件"))
+            else:
+                self.root.after(0, lambda: self.upload_btn.config(state=tk.DISABLED, text="🚫 无上传权限"))
+
+        threading.Thread(target=verify_and_update_btn, daemon=True).start()
         self.set_status("列表加载完成", "green")
 
     def _load_folder(self, path):
@@ -343,7 +351,6 @@ class WebDAVApp:
 
         self.set_status(f"正在加载 {path} ...", "blue")
         try:
-            # 添加 get_info=True 以获取文件大小字典
             files = self.client.list(path, get_info=True)
             self.cache[path] = files
             self.root.after(0, self._update_file_list, files)
@@ -405,33 +412,26 @@ class WebDAVApp:
     def download_file(self, base_name, full_path=None):
         if not self.client: return
         
-        # 防止重复点击下载
-        if getattr(self, 'is_downloading', False):
-            messagebox.showwarning("提示", "当前有正在下载的任务，请稍后再试。")
+        if getattr(self, 'is_downloading', False) or getattr(self, 'is_uploading', False):
+            messagebox.showwarning("提示", "当前有任务正在进行，请稍后再试。")
             return
 
         remote_path = full_path if full_path else ('/' + base_name if self.current_path == '/' else self.current_path.rstrip('/') + '/' + base_name)
-        
         save_path = filedialog.asksaveasfilename(initialfile=base_name, title="保存文件")
         if not save_path: return
 
-        # 设置下载状态与取消标志
         self.is_downloading = True
         self.cancel_flag = False
-
         self.set_status(f"准备下载 {base_name} ...", "blue")
         
-        # 将下载按钮魔改为“取消下载”按钮
         self.download_btn.config(text="❌ 取消下载", command=self.cancel_download_action)
-        
+        self.upload_btn.config(state=tk.DISABLED) # 下载时锁定上传按钮
         self.progress['value'] = 0
         self.progress_label.config(text="0.0% (0 KB/s)")
 
-        # 启动流式下载线程
         threading.Thread(target=self._do_download_stream, args=(remote_path, save_path, base_name), daemon=True).start()
 
     def cancel_download_action(self):
-        """点击取消下载按钮时触发"""
         if getattr(self, 'is_downloading', False):
             if messagebox.askyesno("取消下载", "确定要终止当前的下载任务吗？"):
                 self.cancel_flag = True
@@ -439,33 +439,23 @@ class WebDAVApp:
                 self.download_btn.config(state=tk.DISABLED)
 
     def _do_download_stream(self, remote_path, local_path, display_name):
-        """流式下载引擎，支持中断和实时测速"""
         try:
             info = self.client.info(remote_path)
             total_size = int(info.get('size', 0)) if info else 0
 
-
             response = self.client.execute_request(action='download', path=remote_path)
             response.raise_for_status()
-            # ====================================================
 
             downloaded = 0
             start_time = time.time()
             last_update_time = 0
 
-            # 以追加流的方式写入文件
             with open(local_path, 'wb') as f:
-                # 每次下载 256KB 的数据块
                 for chunk in response.iter_content(chunk_size=1024 * 256):
-                    # 每次循环检查用户是否点击了“取消”
-                    if getattr(self, 'cancel_flag', False):
-                        break
-                        
+                    if getattr(self, 'cancel_flag', False): break
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-                        
-                        # 限制刷新界面的频率（每0.2秒刷新一次），防止界面卡死
                         current_time = time.time()
                         if current_time - last_update_time > 0.2:
                             percent = (downloaded / total_size) * 100 if total_size > 0 else 0
@@ -475,14 +465,10 @@ class WebDAVApp:
                             self.root.after(0, self._update_progress, percent, speed_str)
                             last_update_time = current_time
 
-            # 离开写入循环后，判断是正常下完还是被取消的
             if getattr(self, 'cancel_flag', False):
-                # 安全删除没下完的半截“垃圾文件”
                 if os.path.exists(local_path):
-                    try:
-                        os.remove(local_path)
-                    except:
-                        pass
+                    try: os.remove(local_path)
+                    except: pass
                 self.root.after(0, self._download_done, False, "下载已被手动取消", True)
             else:
                 self.root.after(0, self._update_progress, 100.0, "完成")
@@ -498,11 +484,9 @@ class WebDAVApp:
         self.set_status(f"正在下载... {percent:.1f}%", "blue")
 
     def _download_done(self, success, msg, is_cancelled):
-        # 恢复状态标志
         self.is_downloading = False
-        
-        # 将取消按钮恢复成下载按钮
         self.download_btn.config(text="📥 下载选中项", command=self.download_selected, state=tk.NORMAL)
+        self.upload_btn.config(state=tk.NORMAL if self.current_has_permission else tk.DISABLED)
         self.progress['value'] = 0
         self.progress_label.config(text="")
         
@@ -516,8 +500,72 @@ class WebDAVApp:
             self.set_status("下载出错", "red")
             messagebox.showerror("错误", msg)
 
+    # ========== 上传核心：大文件防呆 + 无权限拦截兜底 ==========
+    def upload_file(self):
+        if not self.client: return
+        
+        if getattr(self, 'is_downloading', False) or getattr(self, 'is_uploading', False):
+            messagebox.showwarning("提示", "当前有任务正在进行，请稍后再试。")
+            return
+
+        local_path = filedialog.askopenfilename(title="选择要上传的文件")
+        if not local_path: return
+
+        # 100MB 物理限制保护内存
+        MAX_UPLOAD_MB = 100
+        MAX_UPLOAD_SIZE = MAX_UPLOAD_MB * 1024 * 1024 
+        file_size = os.path.getsize(local_path)
+        
+        if file_size > MAX_UPLOAD_SIZE:
+            messagebox.showwarning("文件超限", 
+                f"出于稳定性考虑，单次上传最大限制为 {MAX_UPLOAD_MB} MB。\n\n"
+                f"您选中的文件大小为 {self.format_size(file_size)}，请重新选择。")
+            return
+
+        base_name = os.path.basename(local_path)
+        remote_path = ('/' + base_name if self.current_path == '/' else self.current_path.rstrip('/') + '/' + base_name)
+
+        self.is_uploading = True
+        self.set_status(f"准备上传 {base_name} ...", "blue")
+        
+        self.progress.config(mode='indeterminate')
+        self.progress.start(10)
+        self.progress_label.config(text="上传中(由于网盘限制无进度,请勿关闭)...")
+        
+        self.upload_btn.config(state=tk.DISABLED)
+        self.download_btn.config(state=tk.DISABLED)
+
+        threading.Thread(target=self._do_upload_task, args=(remote_path, local_path, base_name), daemon=True).start()
+
+    def _do_upload_task(self, remote_path, local_path, display_name):
+        try:
+            self.client.upload_sync(remote_path=remote_path, local_path=local_path)
+            self.root.after(0, self._upload_done, True, display_name)
+        except Exception as e:
+            traceback.print_exc()
+           
+            self.root.after(0, self._upload_done, False, f"[{display_name}] 上传失败\n\n原因: {str(e)}")
+
+    def _upload_done(self, success, msg):
+        self.is_uploading = False
+        
+        self.progress.stop()
+        self.progress.config(mode='determinate')
+        self.progress['value'] = 0
+        self.progress_label.config(text="")
+        
+        self.download_btn.config(state=tk.NORMAL)
+        self.upload_btn.config(state=tk.NORMAL if self.current_has_permission else tk.DISABLED)
+        
+        if success:
+            self.set_status("上传完成", "green")
+            messagebox.showinfo("成功", f"文件 [{msg}] 已成功上传！")
+            self.refresh()
+        else:
+            self.set_status("上传失败", "red")
+            messagebox.showerror("权限或网络错误", msg)
+
 if __name__ == "__main__":
     root = tk.Tk()
     app = WebDAVApp(root)
     root.mainloop()
-
