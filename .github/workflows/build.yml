@@ -1,99 +1,213 @@
-name: Build Multi-Platform Release
+name: Dual Build Release - PyInstaller & Nuitka
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: # 手动触发按钮
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Build on ${{ matrix.platform_name }}
+  # ========== 1. 前置测试（失败就终止，省时间） ==========
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install webdavclient3 requests
+      # 如果你有测试文件，取消下面注释
+      # - run: pytest
+
+  # ========== 2. PyInstaller 打包 ==========
+  build-pyinstaller:
+    needs: test
+    name: PyInstaller ${{ matrix.platform_name }}
     runs-on: ${{ matrix.os }}
-    
     strategy:
       fail-fast: false
       matrix:
         include:
-          # 1. Windows 64位 (主流电脑)
           - os: windows-latest
             platform_name: Windows_X64
-            python_arch: 'x64'
+            python_arch: x64
             file_ext: .exe
-            
-          # 2. Windows 32位 (兼容老旧电脑和特殊系统)
           - os: windows-latest
             platform_name: Windows_X86
-            python_arch: 'x86'
+            python_arch: x86
             file_ext: .exe
-            
-          # 3. Linux 64位 (常规 x86_64 服务器)
           - os: ubuntu-latest
             platform_name: Linux_X64
-            python_arch: 'x64'
+            python_arch: x64
             file_ext: ""
-            
-          # 4. Linux ARM64 (树莓派、甲骨文 ARM 机器等)
           - os: ubuntu-24.04-arm
             platform_name: Linux_ARM64
             file_ext: ""
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    # 给 Windows 和 Linux X64 指定架构安装
-    - name: Setup Python (For x86 / x64)
-      if: matrix.platform_name != 'Linux_ARM64'
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        architecture: ${{ matrix.python_arch }} 
+      - name: Setup Python (x86/x64)
+        if: matrix.platform_name != 'Linux_ARM64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.python_arch }}
 
-    # 给原生 ARM64 机器使用默认架构安装
-    - name: Setup Python (For ARM64)
-      if: matrix.platform_name == 'Linux_ARM64'
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
+      - name: Setup Python (ARM64)
+        if: matrix.platform_name == 'Linux_ARM64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    # 🐧 Linux 专属：安装底层 Tkinter 图形库依赖
-    - name: Install System Dependencies (Linux Only)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y python3-tk
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk upx-ucl
 
-    - name: Install Python Libraries
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller webdavclient3 requests
+      - name: Install UPX (Windows)
+        if: runner.os == 'Windows'
+        run: choco install upx
 
-    # 为不同系统安装 UPX 压缩工具
-    - name: Install UPX for Compression
-      run: |
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          choco install upx
-        elif [ "$RUNNER_OS" == "Linux" ]; then
-          sudo apt-get install -y upx-ucl
-        fi
-      shell: bash        
+      - name: Install Python Libraries
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller webdavclient3 requests
 
-    # 🪟 Windows 打包：带 .ico 图标和 .exe 后缀
-    - name: Build with PyInstaller (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        pyinstaller --onefile --noconsole --name "Portable_WebDAV_Client_${{ matrix.platform_name }}" --icon=webdav.ico portable_webdav_client_Pro.py
+      - name: Build with PyInstaller (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          pyinstaller --onefile --noconsole `
+            --name "Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}" `
+            --icon=webdav.ico `
+            portable_webdav_client_Pro.py
 
-    # 🐧 Linux 打包：纯净打包，不带图标属性
-    - name: Build with PyInstaller (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        pyinstaller --onefile --noconsole --name "Portable_WebDAV_Client_${{ matrix.platform_name }}" portable_webdav_client_Pro.py
+      - name: Build with PyInstaller (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pyinstaller --onefile --noconsole \
+            --name "Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}" \
+            portable_webdav_client_Pro.py
 
-    # 📤 统一上传产物
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Release-${{ matrix.platform_name }}
-        path: dist/Portable_WebDAV_Client_${{ matrix.platform_name }}${{ matrix.file_ext }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PyInstaller-${{ matrix.platform_name }}
+          path: dist/Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}${{ matrix.file_ext }}
+          if-no-files-found: error
+
+  # ========== 3. Nuitka 打包 ==========
+  build-nuitka:
+    needs: test
+    name: Nuitka ${{ matrix.platform_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform_name: Windows_X64
+            python_arch: x64
+            file_ext: .exe
+          - os: windows-latest
+            platform_name: Windows_X86
+            python_arch: x86
+            file_ext: .exe
+          - os: ubuntu-latest
+            platform_name: Linux_X64
+            python_arch: x64
+            file_ext: ""
+          - os: ubuntu-24.04-arm
+            platform_name: Linux_ARM64
+            file_ext: ""
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python (x86/x64)
+        if: matrix.platform_name != 'Linux_ARM64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.python_arch }}
+
+      - name: Setup Python (ARM64)
+        if: matrix.platform_name == 'Linux_ARM64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-dev gcc upx-ucl
+
+      - name: Install UPX (Windows)
+        if: runner.os == 'Windows'
+        run: choco install upx
+
+      - name: Install Python Libraries
+        run: |
+          python -m pip install --upgrade pip
+          pip install nuitka webdavclient3 requests
+
+      - name: Build with Nuitka (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          python -m nuitka `
+            --onefile `
+            --enable-plugin=tk-inter `
+            --windows-disable-console `
+            --windows-icon-from-ico=webdav.ico `
+            --output-dir=dist `
+            --output-filename=Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }} `
+            --assume-yes-for-downloads `
+            portable_webdav_client_Pro.py
+
+      - name: Build with Nuitka (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python -m nuitka \
+            --onefile \
+            --enable-plugin=tk-inter \
+            --output-dir=dist \
+            --output-filename=Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }} \
+            --assume-yes-for-downloads \
+            portable_webdav_client_Pro.py
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nuitka-${{ matrix.platform_name }}
+          path: dist/Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }}${{ matrix.file_ext }}
+          if-no-files-found: error
+
+  # ========== 4. 自动创建 Release 并上传 ==========
+  release:
+    needs: [build-pyinstaller, build-nuitka]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List Artifacts
+        run: ls -la artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
