@@ -6,20 +6,29 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ========== 1. 前置测试（失败就终止，省时间） ==========
   test:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-      - run: |
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+      - name: Install Python Libraries
+        run: |
           python -m pip install --upgrade pip
-          pip install webdavclient3 requests
-      # 如果你有测试文件，取消下面注释
-      # - run: pytest
+          pip install -r requirements.txt
+      - name: Syntax Check
+        run: python -m py_compile portable_webdav_client_Pro.py
+      - name: Unit Tests
+        run: python -m unittest discover -s tests -t . -v
 
   # ========== 2. PyInstaller 打包 ==========
   build-pyinstaller:
@@ -84,6 +93,7 @@ jobs:
           pyinstaller --onefile --noconsole `
             --name "Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}" `
             --icon=webdav.ico `
+            --add-data "webdav.ico;." `
             portable_webdav_client_Pro.py
 
       - name: Build with PyInstaller (Linux)
@@ -91,6 +101,7 @@ jobs:
         run: |
           pyinstaller --onefile --noconsole \
             --name "Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}" \
+            --add-data "webdav.ico:." \
             portable_webdav_client_Pro.py
 
       - name: Upload Artifact
@@ -99,6 +110,7 @@ jobs:
           name: PyInstaller-${{ matrix.platform_name }}
           path: dist/Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}${{ matrix.file_ext }}
           if-no-files-found: error
+          retention-days: 14
 
   # ========== 3. Nuitka 打包 ==========
   build-nuitka:
@@ -165,6 +177,7 @@ jobs:
             --enable-plugin=tk-inter `
             --windows-disable-console `
             --windows-icon-from-ico=webdav.ico `
+            --include-data-file=webdav.ico=webdav.ico `
             --output-dir=dist `
             --output-filename=Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }} `
             --assume-yes-for-downloads `
@@ -176,6 +189,7 @@ jobs:
           python -m nuitka \
             --onefile \
             --enable-plugin=tk-inter \
+            --include-data-file=webdav.ico=webdav.ico \
             --output-dir=dist \
             --output-filename=Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }} \
             --assume-yes-for-downloads \
@@ -187,6 +201,7 @@ jobs:
           name: Nuitka-${{ matrix.platform_name }}
           path: dist/Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }}${{ matrix.file_ext }}
           if-no-files-found: error
+          retention-days: 14
 
   # ========== 4. 自动创建 Release 并上传 ==========
   release:
@@ -205,7 +220,7 @@ jobs:
         run: ls -la artifacts/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
