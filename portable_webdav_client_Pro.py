@@ -17,7 +17,7 @@ from webdav3.client import Client
 from webdav3.urn import Urn
 
 APP_NAME = "便携 WebDAV 客户端 Pro"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 DEFAULT_URL = "https://webdav.123pan.cn/webdav"
 REQUEST_TIMEOUT = 60          # 秒。避免服务器无响应时后台线程永久挂起
 MAX_UPLOAD_MB = 2048          # WebDAV PUT 的实用上限，同时防止误传超大文件
@@ -27,6 +27,10 @@ HIDE_ALIST_WEBDAV_FOLDER = True   # 隐藏 AList 根目录下冗余的 webdav �
 APP_ICON = "webdav.ico"
 
 _DEFAULT_HEADINGS = {"name": "文件名称", "type": "类型", "size": "大小"}
+
+
+class TransferCancelled(Exception):
+    """用户主动取消传输时抛出，用于中断 requests 的流式读写。"""
 
 
 def resource_path(relative_path):
@@ -133,12 +137,31 @@ class WebDAVApp:
         self.pwd_entry = ttk.Entry(config_frame, width=50, show="*")
         self.pwd_entry.grid(row=2, column=1, padx=5, pady=5, sticky="we")
 
+        ttk.Label(config_frame, text="代理(可选):").grid(row=3, column=0, padx=5, pady=5, sticky="e")
+        self.proxy_entry = ttk.Entry(config_frame, width=50)
+        self.proxy_entry.grid(row=3, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(config_frame, text="CA 证书:").grid(row=4, column=0, padx=5, pady=5, sticky="e")
+        ca_frame = ttk.Frame(config_frame)
+        ca_frame.grid(row=4, column=1, padx=5, pady=5, sticky="we")
+        self.ca_entry = ttk.Entry(ca_frame, width=38)
+        self.ca_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.ca_browse_btn = ttk.Button(ca_frame, text="浏览...", command=self.choose_ca_file, width=8)
+        self.ca_browse_btn.pack(side=tk.LEFT, padx=(5, 0))
+
         self.connect_btn = ttk.Button(config_frame, text="🔌 连接服务器", command=self.connect, width=15)
-        self.connect_btn.grid(row=0, column=2, rowspan=3, padx=15, pady=5, sticky="ns")
+        self.connect_btn.grid(row=0, column=2, rowspan=5, padx=15, pady=5, sticky="ns")
         config_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(
+            config_frame,
+            text="代理留空则跟随系统环境变量；CA 证书用于自签名或企业内网服务器。",
+            foreground="gray",
+        ).grid(row=5, column=0, columnspan=3, padx=5, pady=(0, 2), sticky="w")
 
         self.url_entry.bind("<Return>", lambda _e: self.connect())
         self.pwd_entry.bind("<Return>", lambda _e: self.connect())
+        self.proxy_entry.bind("<Return>", lambda _e: self.connect())
 
         # ========== 工具栏区域 ==========
         toolbar_frame = ttk.Frame(self.root)
@@ -212,6 +235,15 @@ class WebDAVApp:
         self.context_menu.add_command(label="🔗 复制完整路径", command=self.copy_remote_path)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="🔄 刷新", command=self.refresh)
+
+    def choose_ca_file(self):
+        path = filedialog.askopenfilename(
+            title="选择 CA 证书",
+            filetypes=[("PEM/CRT 证书", "*.pem *.crt *.cer"), ("所有文件", "*.*")],
+        )
+        if path:
+            self.ca_entry.delete(0, tk.END)
+            self.ca_entry.insert(0, path)
 
     def _bind_shortcuts(self):
         self.root.bind("<F5>", lambda _e: self.refresh())
@@ -404,6 +436,8 @@ class WebDAVApp:
         input_user = self.user_entry.get().strip()
         user = self.real_username if input_user == self.placeholder_username else input_user
         pwd = self.pwd_entry.get()  # 密码不做 strip，避免吃掉合法空格
+        proxy = self.proxy_entry.get().strip()
+        ca_path = self.ca_entry.get().strip()
 
         if not url or not user or not pwd:
             messagebox.showwarning("提示", "请填写完整的地址、用户名和密码")
@@ -412,9 +446,26 @@ class WebDAVApp:
         self.real_username = user
         self.connect_btn.config(state=tk.DISABLED, text="连接中...")
         self.set_status("正在连接服务器...", "blue")
-        threading.Thread(target=self._do_connect, args=(url, user, pwd), daemon=True).start()
+        threading.Thread(
+            target=self._do_connect, args=(url, user, pwd, proxy, ca_path), daemon=True
+        ).start()
 
-    def _do_connect(self, url, user, pwd):
+    @staticmethod
+    def _apply_network_options(client, proxy, ca_path):
+        """把代理与自定义 CA 应用到 webdavclient3 的 requests 会话。"""
+        if proxy:
+            if not re.match(r"^(https?|socks5h?)://", proxy, re.IGNORECASE):
+                raise ValueError("代理地址格式应为 http://host:port 或 socks5://host:port")
+            client.session.proxies.update({"http": proxy, "https": proxy})
+
+        if ca_path:
+            if not os.path.exists(ca_path):
+                raise ValueError(f"CA 证书文件不存在: {ca_path}")
+            # execute_request 会读取 client.verify；session.verify 作为双保险
+            client.verify = ca_path
+            client.session.verify = ca_path
+
+    def _do_connect(self, url, user, pwd, proxy="", ca_path=""):
         try:
             client = Client({
                 "webdav_hostname": url,
@@ -422,6 +473,7 @@ class WebDAVApp:
                 "webdav_password": pwd,
                 "webdav_timeout": REQUEST_TIMEOUT,
             })
+            self._apply_network_options(client, proxy, ca_path)
             files = client.list("/", get_info=True)
         except Exception as exc:
             self.root.after(0, self._connect_failed, exc)
@@ -617,8 +669,9 @@ class WebDAVApp:
         self.jump_btn.config(state=tk.NORMAL if connected and not busy else tk.DISABLED)
         self.connect_btn.config(state=tk.DISABLED if busy else tk.NORMAL)
 
-        if self.is_downloading:
-            self.download_btn.config(state=tk.NORMAL)  # 此时按钮是"取消下载"
+        if self.is_downloading or self.is_uploading:
+            # 传输期间这个按钮会变成"取消下载/取消上传"
+            self.download_btn.config(state=tk.NORMAL)
         else:
             self.download_btn.config(state=tk.NORMAL if connected and not busy else tk.DISABLED)
 
@@ -734,25 +787,87 @@ class WebDAVApp:
         response = None
         try:
             total_size = int(expected_size or 0)
-            if total_size <= 0:
+            part_size = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
+            headers_ext = []
+
+            # 断点续传：用 Range 请求剩余字节，并用 If-Range 防止远端文件已变化
+            if part_size > 0:
+                info = {}
                 try:
-                    info = client.info(remote_path)
-                    total_size = int(info.get("size") or 0) if info else 0
+                    info = client.info(remote_path) or {}
+                except Exception:
+                    info = {}
+                if total_size <= 0:
+                    total_size = int(info.get("size") or 0)
+                if total_size > 0 and part_size >= total_size:
+                    # 断点已不小于远端文件，直接丢弃重下，避免 416
+                    self._remove_file(tmp_path)
+                    part_size = 0
+                else:
+                    validator = info.get("etag")
+                    if validator and validator.startswith("W/"):
+                        validator = None  # If-Range 只接受强校验器
+                    if not validator:
+                        validator = info.get("modified")
+                    if validator:
+                        headers_ext.append(f"If-Range: {validator}")
+                    headers_ext.append(f"Range: bytes={part_size}-")
+                    self.root.after(0, self.set_status,
+                                    f"检测到断点，正在续传 {display_name} ...", "blue")
+
+            if part_size <= 0 and total_size <= 0:
+                try:
+                    info = client.info(remote_path) or {}
+                    total_size = int(info.get("size") or 0)
                 except Exception:
                     total_size = 0
 
-            response = client.execute_request(action="download", path=Urn(remote_path).quote())
+            if part_size > 0 and total_size > 0:
+                self.root.after(0, self._update_progress,
+                                part_size * 100 / total_size, "断点续传", "下载")
+
+            try:
+                response = client.execute_request(
+                    action="download",
+                    path=Urn(remote_path).quote(),
+                    headers_ext=headers_ext or None,
+                )
+            except Exception as exc:
+                if part_size > 0 and getattr(exc, "code", None) == 416:
+                    # 服务器认为 Range 无效，清空断点后完整重下
+                    self._remove_file(tmp_path)
+                    part_size = 0
+                    response = client.execute_request(
+                        action="download", path=Urn(remote_path).quote()
+                    )
+                else:
+                    raise
+
             response.raise_for_status()
-            if total_size <= 0:
+            if part_size > 0 and response.status_code == 206:
+                mode = "ab"
+                downloaded = part_size
+                content_range = response.headers.get("Content-Range", "")
+                match = re.search(r"/(\d+)\s*$", content_range)
+                if match:
+                    total_size = int(match.group(1))
+            else:
+                # 服务器忽略 Range 或文件已变化返回 200：从头写
+                mode = "wb"
+                downloaded = 0
+                part_size = 0
                 content_length = response.headers.get("content-length")
-                if content_length:
+                if content_length and content_length.isdigit():
                     total_size = int(content_length)
 
-            downloaded = 0
+            if total_size <= 0:
+                content_length = response.headers.get("content-length")
+                if content_length and content_length.isdigit():
+                    total_size = int(content_length)
+
             start_time = time.monotonic()
             last_update_time = 0.0
-
-            with open(tmp_path, "wb") as handle:
+            with open(tmp_path, mode) as handle:
                 for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                     if self.cancel_flag:
                         break
@@ -763,16 +878,23 @@ class WebDAVApp:
                     current_time = time.monotonic()
                     if current_time - last_update_time > 0.2:
                         elapsed = current_time - start_time
-                        speed = downloaded / elapsed if elapsed > 0 else 0
+                        transferred = max(0, downloaded - part_size)
+                        speed = transferred / elapsed if elapsed > 0 else 0
                         percent = (downloaded / total_size) * 100 if total_size > 0 else 0
                         self.root.after(0, self._update_progress,
                                         min(percent, 99.9), self.format_speed(speed), "下载")
                         last_update_time = current_time
 
-            if self.cancel_flag:
-                self._remove_file(tmp_path)
-                self.root.after(0, self._download_done, False, "下载已被手动取消", True)
+            if self.cancel_flag and (total_size <= 0 or downloaded < total_size):
+                # 保留 .part 作为断点，下次下载同一路径会自动续传
+                self.root.after(0, self._download_done, False, "下载已暂停，断点已保留", True)
                 return
+
+            if total_size > 0 and downloaded < total_size:
+                raise IOError(
+                    f"连接提前结束：已下载 {self.format_size(downloaded)} / "
+                    f"{self.format_size(total_size)}"
+                )
 
             # 先写 .part 再原子替换，取消/失败时不会破坏本地同名旧文件
             os.replace(tmp_path, local_path)
@@ -781,8 +903,10 @@ class WebDAVApp:
 
         except Exception as exc:
             traceback.print_exc()
-            self._remove_file(tmp_path)
-            self.root.after(0, self._download_done, False, f"{display_name} 下载失败: {exc}", False)
+            # 保留断点，便于用户重试续传；目标文件始终不被破坏
+            note = "\n\n已保留断点，可再次下载同一路径继续。" if os.path.exists(tmp_path) else ""
+            self.root.after(0, self._download_done, False,
+                            f"{display_name} 下载失败: {exc}{note}", False)
         finally:
             if response is not None:
                 try:
@@ -804,8 +928,11 @@ class WebDAVApp:
         self._set_nav_state()
 
         if is_cancelled:
-            self.set_status("已取消下载", "orange")
-            messagebox.showinfo("已取消", "下载任务已取消，残留文件已清理。")
+            self.set_status("已暂停下载", "orange")
+            messagebox.showinfo(
+                "已暂停",
+                "下载已暂停，断点文件已保留。\n再次下载同一路径时会自动续传。",
+            )
         elif success:
             self.set_status(f"下载完成: {msg}", "green")
             messagebox.showinfo("下载完成", f"[{msg}] 已成功保存到本地！")
@@ -839,8 +966,10 @@ class WebDAVApp:
         remote_path = self._join_remote(base_name)
 
         self.is_uploading = True
+        self.cancel_flag = False
         self.set_status(f"准备上传 {base_name} ...", "blue")
 
+        self.download_btn.config(text="❌ 取消上传", command=self.cancel_upload_action)
         self.progress.config(mode="determinate")
         self.progress["value"] = 0
         self.progress_label.config(text="0.0% (0 KB/s)")
@@ -851,6 +980,16 @@ class WebDAVApp:
             args=(remote_path, local_path, base_name),
             daemon=True,
         ).start()
+
+    def cancel_upload_action(self):
+        if self.is_uploading:
+            if messagebox.askyesno(
+                "取消上传",
+                "确定要终止当前上传任务吗？\n未完成的上传通常会由服务器丢弃。",
+            ):
+                self.cancel_flag = True
+                self.set_status("正在取消上传，请稍候...", "orange")
+                self.download_btn.config(state=tk.DISABLED)
 
     def _do_upload_task(self, remote_path, local_path, display_name):
         client = self.client
@@ -863,6 +1002,8 @@ class WebDAVApp:
 
             def on_progress(current, total, *args):
                 nonlocal last_time, last_bytes
+                if self.cancel_flag:
+                    raise TransferCancelled()
                 now = time.monotonic()
                 if now - last_time < 0.2 and current < total:
                     return
@@ -872,21 +1013,33 @@ class WebDAVApp:
                 self.root.after(0, self._update_progress,
                                 min(percent, 99.9), self.format_speed(speed), "上传")
 
+            if self.cancel_flag:
+                raise TransferCancelled()
             if file_size > 0:
                 client.upload_sync(remote_path=remote_path, local_path=local_path, progress=on_progress)
             else:
                 # 空文件走无 progress 分支，避免 chunk 生成器处理 0 字节的边界问题
                 client.upload_sync(remote_path=remote_path, local_path=local_path)
 
+            if self.cancel_flag:
+                raise TransferCancelled()
             self.root.after(0, self._update_progress, 100.0, "完成", "上传")
             self.root.after(0, self._upload_done, True, display_name)
+        except TransferCancelled:
+            self.root.after(0, self._upload_done, False, "上传已取消", True)
         except Exception as exc:
-            traceback.print_exc()
-            self.root.after(0, self._upload_done, False,
-                            f"[{display_name}] 上传失败\n\n原因: {exc}")
+            if self.cancel_flag:
+                # requests 有时会把生成器里的异常包装成 RequestException
+                self.root.after(0, self._upload_done, False, "上传已取消", True)
+            else:
+                traceback.print_exc()
+                self.root.after(0, self._upload_done, False,
+                                f"[{display_name}] 上传失败\n\n原因: {exc}")
 
-    def _upload_done(self, success, msg):
+    def _upload_done(self, success, msg, is_cancelled=False):
         self.is_uploading = False
+        self.cancel_flag = False
+        self.download_btn.config(text="📥 下载选中项", command=self.download_selected)
 
         try:
             self.progress.stop()
@@ -897,7 +1050,13 @@ class WebDAVApp:
         self.progress_label.config(text="")
         self._set_nav_state()
 
-        if success:
+        if is_cancelled:
+            self.set_status("已取消上传", "orange")
+            messagebox.showinfo(
+                "已取消",
+                "上传任务已取消。\n服务器端通常会丢弃未完成的内容；如出现残留文件，刷新后可手动删除。",
+            )
+        elif success:
             self.cache.pop(self.current_path, None)
             self.set_status("上传完成", "green")
             messagebox.showinfo("成功", f"文件 [{msg}] 已成功上传！")

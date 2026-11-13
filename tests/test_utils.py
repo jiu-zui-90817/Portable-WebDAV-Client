@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from portable_webdav_client_Pro import MAX_CACHE_ENTRIES, WebDAVApp
@@ -96,6 +97,177 @@ class FileListTests(unittest.TestCase):
         for index in range(MAX_CACHE_ENTRIES + 5):
             app._cache_put("/{}".format(index), [])
         self.assertEqual(len(app.cache), MAX_CACHE_ENTRIES)
+
+
+class FakeSession:
+    def __init__(self):
+        self.proxies = {}
+        self.verify = True
+
+
+class FakeClient:
+    def __init__(self):
+        self.session = FakeSession()
+        self.verify = True
+
+
+class NetworkOptionsTests(unittest.TestCase):
+    def test_http_proxy_applied(self):
+        client = FakeClient()
+        WebDAVApp._apply_network_options(client, "http://127.0.0.1:7890", "")
+        self.assertEqual(client.session.proxies["http"], "http://127.0.0.1:7890")
+        self.assertEqual(client.session.proxies["https"], "http://127.0.0.1:7890")
+
+    def test_socks_proxy_applied(self):
+        client = FakeClient()
+        WebDAVApp._apply_network_options(client, "socks5://127.0.0.1:1080", "")
+        self.assertEqual(client.session.proxies["https"], "socks5://127.0.0.1:1080")
+
+    def test_invalid_proxy_rejected(self):
+        with self.assertRaises(ValueError):
+            WebDAVApp._apply_network_options(FakeClient(), "127.0.0.1:7890", "")
+
+    def test_custom_ca_applied(self):
+        client = FakeClient()
+        ca_path = os.path.abspath(__file__)
+        WebDAVApp._apply_network_options(client, "", ca_path)
+        self.assertEqual(client.verify, ca_path)
+        self.assertEqual(client.session.verify, ca_path)
+
+    def test_missing_ca_rejected(self):
+        with self.assertRaises(ValueError):
+            WebDAVApp._apply_network_options(FakeClient(), "", os.path.join(os.getcwd(), "no-such-ca.pem"))
+
+
+class FakeRoot:
+    def after(self, _delay, callback, *args):
+        callback(*args)
+
+
+class FakeResponse:
+    def __init__(self, status_code, payload, headers=None):
+        self.status_code = status_code
+        self.payload = payload
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size=0):
+        yield self.payload
+
+    def close(self):
+        return None
+
+
+class FakeDownloadClient:
+    def __init__(self, response):
+        self.response = response
+        self.requests = []
+
+    def info(self, path):
+        return {"size": "10", "etag": '"abc123"', "modified": "Wed, 21 Oct 2015 07:28:00 GMT"}
+
+    def execute_request(self, action, path, headers_ext=None):
+        self.requests.append(headers_ext)
+        return self.response
+
+
+class DownloadResumeTests(unittest.TestCase):
+    def _app(self, client, done):
+        app = object.__new__(WebDAVApp)
+        app.root = FakeRoot()
+        app.client = client
+        app.cancel_flag = False
+        app._update_progress = lambda *args, **kwargs: None
+        app._download_done = lambda *args, **kwargs: done.append(args)
+        app.set_status = lambda *args, **kwargs: None
+        return app
+
+    def test_resume_uses_range_and_appends(self):
+        local_path = os.path.join(os.getcwd(), "_test_resume_" + os.urandom(4).hex() + ".bin")
+        part_path = local_path + ".part"
+        done = []
+        try:
+            with open(part_path, "wb") as handle:
+                handle.write(b"12345")
+
+            client = FakeDownloadClient(
+                FakeResponse(206, b"67890", {"Content-Range": "bytes 5-9/10", "Content-Length": "5"})
+            )
+            app = self._app(client, done)
+            app._do_download_stream("/file.bin", local_path, "file.bin", 10)
+
+            with open(local_path, "rb") as handle:
+                self.assertEqual(handle.read(), b"1234567890")
+            self.assertFalse(os.path.exists(part_path))
+            headers = client.requests[0]
+            self.assertTrue(any(h.startswith("Range: bytes=5-") for h in headers))
+            self.assertTrue(any(h.startswith("If-Range:") for h in headers))
+            self.assertEqual(done[-1][0], True)
+        finally:
+            for path in (local_path, part_path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+    def test_server_ignores_range_restarts_from_zero(self):
+        local_path = os.path.join(os.getcwd(), "_test_restart_" + os.urandom(4).hex() + ".bin")
+        part_path = local_path + ".part"
+        done = []
+        try:
+            with open(part_path, "wb") as handle:
+                handle.write(b"OLDDATA")
+
+            client = FakeDownloadClient(FakeResponse(200, b"newcontent", {"Content-Length": "10"}))
+            app = self._app(client, done)
+            app._do_download_stream("/file.bin", local_path, "file.bin", 10)
+
+            with open(local_path, "rb") as handle:
+                self.assertEqual(handle.read(), b"newcontent")
+            self.assertFalse(os.path.exists(part_path))
+            self.assertEqual(done[-1][0], True)
+        finally:
+            for path in (local_path, part_path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
+class FakeUploadClient:
+    def __init__(self, app):
+        self.app = app
+
+    def upload_sync(self, remote_path, local_path, progress=None, **kwargs):
+        progress(0, 10)
+        self.app.cancel_flag = True
+        progress(5, 10)
+
+
+class UploadCancelTests(unittest.TestCase):
+    def test_cancel_from_progress_callback(self):
+        local_path = os.path.join(os.getcwd(), "_test_upload_" + os.urandom(4).hex() + ".bin")
+        with open(local_path, "wb") as handle:
+            handle.write(b"0123456789")
+
+        done = []
+        app = object.__new__(WebDAVApp)
+        app.root = FakeRoot()
+        app.cancel_flag = False
+        app._update_progress = lambda *args, **kwargs: None
+        app._upload_done = lambda *args, **kwargs: done.append(args)
+        app.client = FakeUploadClient(app)
+        try:
+            app._do_upload_task("/file.bin", local_path, "file.bin")
+        finally:
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
+
+        self.assertEqual(done[-1], (False, "上传已取消", True))
 
 
 if __name__ == "__main__":

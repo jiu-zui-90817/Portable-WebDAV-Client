@@ -85,7 +85,7 @@ jobs:
       - name: Install Python Libraries
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller webdavclient3 requests
+          pip install pyinstaller -r requirements.txt
 
       - name: Build with PyInstaller (Windows)
         if: runner.os == 'Windows'
@@ -94,6 +94,7 @@ jobs:
             --name "Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}" `
             --icon=webdav.ico `
             --add-data "webdav.ico;." `
+            --hidden-import=socks `
             portable_webdav_client_Pro.py
 
       - name: Build with PyInstaller (Linux)
@@ -102,6 +103,7 @@ jobs:
           pyinstaller --onefile --noconsole \
             --name "Portable_WebDAV_Client_PyInstaller_${{ matrix.platform_name }}" \
             --add-data "webdav.ico:." \
+            --hidden-import=socks \
             portable_webdav_client_Pro.py
 
       - name: Upload Artifact
@@ -167,7 +169,7 @@ jobs:
       - name: Install Python Libraries
         run: |
           python -m pip install --upgrade pip
-          pip install nuitka webdavclient3 requests
+          pip install nuitka -r requirements.txt
 
       - name: Build with Nuitka (Windows)
         if: runner.os == 'Windows'
@@ -178,6 +180,7 @@ jobs:
             --windows-disable-console `
             --windows-icon-from-ico=webdav.ico `
             --include-data-file=webdav.ico=webdav.ico `
+            --include-module=socks `
             --output-dir=dist `
             --output-filename=Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }} `
             --assume-yes-for-downloads `
@@ -190,6 +193,7 @@ jobs:
             --onefile \
             --enable-plugin=tk-inter \
             --include-data-file=webdav.ico=webdav.ico \
+            --include-module=socks \
             --output-dir=dist \
             --output-filename=Portable_WebDAV_Client_Nuitka_${{ matrix.platform_name }} \
             --assume-yes-for-downloads \
