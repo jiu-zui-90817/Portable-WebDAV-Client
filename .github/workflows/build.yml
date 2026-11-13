@@ -1,4 +1,4 @@
-name: Dual Build Release - PyInstaller & Nuitka
+name: Multi Build Release - PyInstaller, Nuitka & Win7
 
 on:
   push:
@@ -25,6 +25,27 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Syntax Check
+        run: python -m py_compile portable_webdav_client_Pro.py
+      - name: Unit Tests
+        run: python -m unittest discover -s tests -t . -v
+
+  # ========== 1b. Windows 7 兼容性测试（Python 3.8） ==========
+  test-win7:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.8.10'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-win7.txt
+      - name: Install Python Libraries
+        run: |
+          python -m pip install --upgrade 'pip<25'
+          pip install -r requirements-win7.txt
       - name: Syntax Check
         run: python -m py_compile portable_webdav_client_Pro.py
       - name: Unit Tests
@@ -114,7 +135,52 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # ========== 3. Nuitka 打包 ==========
+  # ========== 2b. Windows 7 专用打包（Python 3.8 + PyInstaller） ==========
+  # 说明：Nuitka 标准版只面向 Windows 10+，Win7 用户请使用这里的 PyInstaller 产物。
+  build-win7:
+    needs: test-win7
+    name: PyInstaller Win7 ${{ matrix.platform_name }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_name: Windows7_X64
+            python_arch: x64
+          - platform_name: Windows7_X86
+            python_arch: x86
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+          architecture: ${{ matrix.python_arch }}
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-win7.txt
+      - name: Install Python Libraries
+        run: |
+          python -m pip install --upgrade 'pip<25'
+          pip install -r requirements-win7.txt
+          pip install pyinstaller==6.18.0
+      - name: Build with PyInstaller (Windows 7)
+        run: |
+          pyinstaller --onefile --noconsole `
+            --name "Portable_WebDAV_Client_Win7_${{ matrix.platform_name }}" `
+            --icon=webdav.ico `
+            --add-data "webdav.ico;." `
+            --hidden-import=socks `
+            portable_webdav_client_Pro.py
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Win7-PyInstaller-${{ matrix.platform_name }}
+          path: dist/Portable_WebDAV_Client_Win7_${{ matrix.platform_name }}.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  # ========== 3. Nuitka 打包（标准版面向 Windows 10+） ==========
   build-nuitka:
     needs: test
     name: Nuitka ${{ matrix.platform_name }}
@@ -209,7 +275,7 @@ jobs:
 
   # ========== 4. 自动创建 Release 并上传 ==========
   release:
-    needs: [build-pyinstaller, build-nuitka]
+    needs: [build-pyinstaller, build-nuitka, build-win7]
     runs-on: ubuntu-latest
     permissions:
       contents: write

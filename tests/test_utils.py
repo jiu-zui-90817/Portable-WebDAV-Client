@@ -1,6 +1,7 @@
 import os
 import unittest
 
+import portable_webdav_client_Pro as client_module
 from portable_webdav_client_Pro import MAX_CACHE_ENTRIES, WebDAVApp
 
 
@@ -268,6 +269,16 @@ class UploadCancelTests(unittest.TestCase):
                 pass
 
         self.assertEqual(done[-1], (False, "上传已取消", True))
+
+
+class LabelTests(unittest.TestCase):
+    def test_legacy_windows_uses_text_only(self):
+        original = client_module.LEGACY_WINDOWS
+        try:
+            client_module.LEGACY_WINDOWS = True
+            self.assertEqual(client_module.ui_label("📥", "下载"), "下载")
+        finally:
+            client_module.LEGACY_WINDOWS = original
 
 
 if __name__ == "__main__":

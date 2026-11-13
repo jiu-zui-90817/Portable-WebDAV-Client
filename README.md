@@ -45,17 +45,35 @@
 - **自定义 CA**：点击“浏览...”选择 PEM/CRT 证书文件，适用于自签名证书或企业内网 HTTPS 中间人代理。
 - 代理与 CA 只在当前进程内使用，不写入配置文件；账号密码同样不落盘。
 
+## 🪟 Windows 7 兼容性
+
+**结论：程序代码兼容 Python 3.8，并已提供 Win7 专用构建；但当前环境无法做真实 Win7 实机回归，建议先在目标机器上验证。**
+
+- Win7 用户请下载文件名带 `Win7` 的包：
+  - 64 位：`Portable_WebDAV_Client_Win7_Windows7_X64.exe`
+  - 32 位：`Portable_WebDAV_Client_Win7_Windows7_X86.exe`
+- 普通的 `Windows_X64/X86` 构建使用 Python 3.9，而 Python 3.9 官方最低要求 Windows 8.1，**不能在 Win7 上运行**。
+- Win7 构建使用 Python 3.8.10 + PyInstaller 6.x；Python 3.8 是最后一个官方支持 Win7 的版本。PyInstaller 官方运行环境要求 Win8+，对 Win7 目标仅表示 “should work”，因此 Win7 包属于尽力兼容，建议实机验证。
+- 系统要求：Windows 7 SP1，并建议安装：
+  - KB2999226（Universal C Runtime，缺少时通常报 `api-ms-win-crt-*.dll` 缺失）
+  - KB2533623（Python 3.8 需要的 `AddDllDirectory` API）
+  - KB3140245 等 TLS 1.2 相关更新（部分 HTTPS 服务器需要）
+  - KB4474419、KB4490628（SHA-2 代码签名支持）
+- Nuitka 标准版官方面向 Windows 10+；Win7 请使用 PyInstaller 的 Win7 包，或使用 Nuitka Commercial 的 Legacy Windows 构建。
+- Win7 没有彩色 Emoji 字体，程序会自动退化为纯文字按钮，不影响功能。
+- Windows 7 与 Python 3.8 均已停止官方支持，仅建议用于无法升级的老设备或内网环境。
+
 ## 📦 如何使用（普通用户）
 
 如果你不想配置 Python 环境，可以直接下载打包好的便携版可执行文件：
 
 1. 前往本项目的 [Releases 页面](https://github.com/jiu-zui-90817/Portable-WebDAV-Client/releases)。
-2. 下载最新的可执行文件（PyInstaller 或 Nuitka 版本均可）。
+2. 下载最新的可执行文件（PyInstaller 或 Nuitka 版本均可）；Windows 7 请选择文件名带 `Win7` 的包。
 3. 双击直接运行，无需安装。
 
 ## 🛠️ 如何开发 / 运行源代码
 
-要求 Python 3.9+。
+要求 Python 3.9+（代码本身兼容 3.8；Windows 7 构建固定使用 Python 3.8.10）。
 
 **1. 克隆项目**
 
@@ -110,12 +128,23 @@ python -m nuitka --onefile --enable-plugin=tk-inter ^
 
 > Linux / macOS 下把 `^` 换成 `\`，并把 `;` 换成 `:` 即可。
 
+**Windows 7 专用包**
+
+```powershell
+py -3.8-32 -m venv .venv-win7
+.venv-win7\Scripts\pip install -r requirements-win7.txt pyinstaller==6.18.0
+.venv-win7\Scripts\pyinstaller --onefile --noconsole --name Portable_WebDAV_Client_Win7 --icon=webdav.ico --add-data "webdav.ico;." --hidden-import=socks portable_webdav_client_Pro.py
+```
+
+> 64 位 Win7 请把 `-3.8-32` 换成 `-3.8` 并使用 64 位 Python。CI 中的 `build-win7` 会自动产出两个架构。
+
 ## 📁 项目结构
 
 ```text
 Portable-WebDAV-Client/
 ├── portable_webdav_client_Pro.py   # 主程序（单文件实现）
 ├── requirements.txt                # Python 依赖
+├── requirements-win7.txt           # Win7 / Python 3.8 专用依赖锁
 ├── tests/                          # 不依赖窗口的纯逻辑单元测试
 ├── assets/screenshot.png           # README 截图
 ├── webdav.ico                      # 程序图标
@@ -130,6 +159,8 @@ Portable-WebDAV-Client/
 - **打包后窗口没有图标？** 确认打包时通过 `--add-data`（PyInstaller）或 `--include-data-file`（Nuitka）带上了 `webdav.ico`。
 - **下载目录里出现 `.part` 文件？** 这是断点文件，保留可续传；删除后下次会从头下载。
 - **SOCKS5 代理报缺少依赖？** 执行 `pip install PySocks` 后重试。
+- **Win7 双击没反应或提示缺少 DLL？** 确认使用带 `Win7` 的构建包，并安装 KB2999226（UCRT）与 KB2533623。
+- **Win7 上按钮图标变成方块？** 这是 Win7 字体限制；程序已自动退化为纯文字，不影响功能。
 
 ## 🔐 安全说明
 

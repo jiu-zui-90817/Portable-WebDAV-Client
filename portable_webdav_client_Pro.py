@@ -17,7 +17,7 @@ from webdav3.client import Client
 from webdav3.urn import Urn
 
 APP_NAME = "便携 WebDAV 客户端 Pro"
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 DEFAULT_URL = "https://webdav.123pan.cn/webdav"
 REQUEST_TIMEOUT = 60          # 秒。避免服务器无响应时后台线程永久挂起
 MAX_UPLOAD_MB = 2048          # WebDAV PUT 的实用上限，同时防止误传超大文件
@@ -31,6 +31,35 @@ _DEFAULT_HEADINGS = {"name": "文件名称", "type": "类型", "size": "大小"}
 
 class TransferCancelled(Exception):
     """用户主动取消传输时抛出，用于中断 requests 的流式读写。"""
+
+
+def _detect_legacy_windows():
+    """Windows 7 / Vista 等旧系统没有彩色 emoji 字体。"""
+    if os.name != "nt":
+        return False
+    try:
+        return sys.getwindowsversion()[:2] < (6, 2)
+    except Exception:
+        return False
+
+
+LEGACY_WINDOWS = _detect_legacy_windows()
+
+
+def ui_label(icon, text):
+    """旧版 Windows 上退化为纯文字，避免按钮出现方块。"""
+    return text if LEGACY_WINDOWS else f"{icon} {text}"
+
+
+BTN_CONNECT = ui_label("🔌", "连接服务器")
+BTN_RECONNECT = ui_label("🔌", "重新连接")
+BTN_UP = ui_label("⬆️", "返回上级")
+BTN_REFRESH = ui_label("🔄", "刷新")
+BTN_JUMP = ui_label("🚀", "跳转路径")
+BTN_DOWNLOAD = ui_label("📥", "下载选中项")
+BTN_UPLOAD = ui_label("📤", "上传文件")
+BTN_CANCEL_DOWNLOAD = ui_label("❌", "取消下载")
+BTN_CANCEL_UPLOAD = ui_label("❌", "取消上传")
 
 
 def resource_path(relative_path):
@@ -149,7 +178,7 @@ class WebDAVApp:
         self.ca_browse_btn = ttk.Button(ca_frame, text="浏览...", command=self.choose_ca_file, width=8)
         self.ca_browse_btn.pack(side=tk.LEFT, padx=(5, 0))
 
-        self.connect_btn = ttk.Button(config_frame, text="🔌 连接服务器", command=self.connect, width=15)
+        self.connect_btn = ttk.Button(config_frame, text=BTN_CONNECT, command=self.connect, width=15)
         self.connect_btn.grid(row=0, column=2, rowspan=5, padx=15, pady=5, sticky="ns")
         config_frame.grid_columnconfigure(1, weight=1)
 
@@ -167,19 +196,19 @@ class WebDAVApp:
         toolbar_frame = ttk.Frame(self.root)
         toolbar_frame.grid(row=1, column=0, padx=15, pady=5, sticky="ew")
 
-        self.up_btn = ttk.Button(toolbar_frame, text="⬆️ 返回上级", command=self.go_up, state=tk.DISABLED)
+        self.up_btn = ttk.Button(toolbar_frame, text=BTN_UP, command=self.go_up, state=tk.DISABLED)
         self.up_btn.pack(side=tk.LEFT, padx=(0, 5))
 
-        self.refresh_btn = ttk.Button(toolbar_frame, text="🔄 刷新", command=self.refresh, state=tk.DISABLED)
+        self.refresh_btn = ttk.Button(toolbar_frame, text=BTN_REFRESH, command=self.refresh, state=tk.DISABLED)
         self.refresh_btn.pack(side=tk.LEFT, padx=5)
 
-        self.jump_btn = ttk.Button(toolbar_frame, text="🚀 跳转路径", command=self.jump_to_path, state=tk.DISABLED)
+        self.jump_btn = ttk.Button(toolbar_frame, text=BTN_JUMP, command=self.jump_to_path, state=tk.DISABLED)
         self.jump_btn.pack(side=tk.LEFT, padx=5)
 
-        self.download_btn = ttk.Button(toolbar_frame, text="📥 下载选中项", command=self.download_selected, state=tk.DISABLED)
+        self.download_btn = ttk.Button(toolbar_frame, text=BTN_DOWNLOAD, command=self.download_selected, state=tk.DISABLED)
         self.download_btn.pack(side=tk.LEFT, padx=5)
 
-        self.upload_btn = ttk.Button(toolbar_frame, text="📤 上传文件", command=self.upload_file, state=tk.DISABLED)
+        self.upload_btn = ttk.Button(toolbar_frame, text=BTN_UPLOAD, command=self.upload_file, state=tk.DISABLED)
         self.upload_btn.pack(side=tk.LEFT, padx=5)
 
         # ========== 路径显示 ==========
@@ -228,13 +257,13 @@ class WebDAVApp:
 
     def create_context_menu(self):
         self.context_menu = Menu(self.root, tearoff=0, font=("Microsoft YaHei", 9))
-        self.context_menu.add_command(label="📥 下载选中文件", command=self.download_selected)
-        self.context_menu.add_command(label="📤 上传文件到当前目录", command=self.upload_file)
+        self.context_menu.add_command(label=ui_label("📥", "下载选中文件"), command=self.download_selected)
+        self.context_menu.add_command(label=ui_label("📤", "上传文件到当前目录"), command=self.upload_file)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="📋 复制文件名称", command=self.copy_filename)
-        self.context_menu.add_command(label="🔗 复制完整路径", command=self.copy_remote_path)
+        self.context_menu.add_command(label=ui_label("📋", "复制文件名称"), command=self.copy_filename)
+        self.context_menu.add_command(label=ui_label("🔗", "复制完整路径"), command=self.copy_remote_path)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="🔄 刷新", command=self.refresh)
+        self.context_menu.add_command(label=ui_label("🔄", "刷新"), command=self.refresh)
 
     def choose_ca_file(self):
         path = filedialog.askopenfilename(
@@ -493,12 +522,12 @@ class WebDAVApp:
         self._current_items = []
         self._row_paths.clear()
         self._update_file_list(files)
-        self.connect_btn.config(state=tk.NORMAL, text="🔌 重新连接")
+        self.connect_btn.config(state=tk.NORMAL, text=BTN_RECONNECT)
         self._set_nav_state()
         self.set_status("连接成功", "green")
 
     def _connect_failed(self, exc):
-        self.connect_btn.config(state=tk.NORMAL, text="🔌 连接服务器")
+        self.connect_btn.config(state=tk.NORMAL, text=BTN_CONNECT)
         self.set_status("连接失败", "red")
         messagebox.showerror("连接失败", str(exc))
 
@@ -760,7 +789,7 @@ class WebDAVApp:
         self.cancel_flag = False
         self.set_status(f"准备下载 {base_name} ...", "blue")
 
-        self.download_btn.config(text="❌ 取消下载", command=self.cancel_download_action)
+        self.download_btn.config(text=BTN_CANCEL_DOWNLOAD, command=self.cancel_download_action)
         self.progress["value"] = 0
         self.progress_label.config(text="0.0% (0 KB/s)")
         self._set_nav_state()
@@ -922,7 +951,7 @@ class WebDAVApp:
     def _download_done(self, success, msg, is_cancelled):
         self.is_downloading = False
         self.cancel_flag = False
-        self.download_btn.config(text="📥 下载选中项", command=self.download_selected)
+        self.download_btn.config(text=BTN_DOWNLOAD, command=self.download_selected)
         self.progress["value"] = 0
         self.progress_label.config(text="")
         self._set_nav_state()
@@ -969,7 +998,7 @@ class WebDAVApp:
         self.cancel_flag = False
         self.set_status(f"准备上传 {base_name} ...", "blue")
 
-        self.download_btn.config(text="❌ 取消上传", command=self.cancel_upload_action)
+        self.download_btn.config(text=BTN_CANCEL_UPLOAD, command=self.cancel_upload_action)
         self.progress.config(mode="determinate")
         self.progress["value"] = 0
         self.progress_label.config(text="0.0% (0 KB/s)")
@@ -1039,7 +1068,7 @@ class WebDAVApp:
     def _upload_done(self, success, msg, is_cancelled=False):
         self.is_uploading = False
         self.cancel_flag = False
-        self.download_btn.config(text="📥 下载选中项", command=self.download_selected)
+        self.download_btn.config(text=BTN_DOWNLOAD, command=self.download_selected)
 
         try:
             self.progress.stop()
