@@ -1,3 +1,4 @@
 webdavclient3>=3.14.7,<4
 requests>=2.31,<3
-PySocks>=1.7.1  # SOCKS5 代理支持
+# SOCKS5 proxy support
+PySocks>=1.7.1

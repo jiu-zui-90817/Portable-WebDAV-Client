@@ -1,5 +1,6 @@
-# Windows 7 / Python 3.8 专用依赖锁
-# Python 3.8 是最后一个官方支持 Windows 7 的版本；以下版本均有 cp38 的 win32/amd64 轮子
+# Windows 7 / Python 3.8 pinned dependencies
+# Python 3.8 is the last version that officially supports Windows 7.
+# All versions below provide cp38 win32/amd64 wheels.
 -r requirements.txt
 
 webdavclient3==3.14.7

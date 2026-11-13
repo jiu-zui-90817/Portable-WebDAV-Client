@@ -281,5 +281,15 @@ class LabelTests(unittest.TestCase):
             client_module.LEGACY_WINDOWS = original
 
 
+class RequirementsEncodingTests(unittest.TestCase):
+    def test_requirements_files_are_ascii(self):
+        # pip on Python 3.8 / Windows may read requirements files as cp1252.
+        for name in ("requirements.txt", "requirements-win7.txt"):
+            with open(os.path.join(os.getcwd(), name), "rb") as handle:
+                data = handle.read()
+            self.assertTrue(data.isascii(), name + " must stay ASCII-only")
+            data.decode("cp1252")
+
+
 if __name__ == "__main__":
     unittest.main()
