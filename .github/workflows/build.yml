@@ -68,7 +68,7 @@ jobs:
             platform_name: Windows_X86
             python_arch: x86
             file_ext: .exe
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform_name: Linux_X64
             python_arch: x64
             file_ext: ""
@@ -197,7 +197,7 @@ jobs:
             platform_name: Windows_X86
             python_arch: x86
             file_ext: .exe
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform_name: Linux_X64
             python_arch: x64
             file_ext: ""
@@ -278,7 +278,7 @@ jobs:
     needs: [build-pyinstaller, build-nuitka, build-win7]
     # 手动触发（非 tag）时只构建并上传 artifacts，不创建 Release
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
